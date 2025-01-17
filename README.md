@@ -13,4 +13,4 @@ the database.
 
 Schema is contained in the `postgres` directory.
 
-Install with `pip install -e .`.
+Install with `pip install pgvector-rag`.
