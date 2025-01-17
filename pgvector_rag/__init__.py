@@ -5,8 +5,8 @@ pgvector_rag
 A simple library for working with RAG documents using pg_vector in PostgreSQL.
 
 """
-version = '0.1.0'
+from .rag import RAG, Document
 
-from .rag import Document, RAG
+version = '0.1.0'
 
 __all__ = ['Document', 'RAG', 'version']

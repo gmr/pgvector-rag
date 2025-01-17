@@ -1,10 +1,6 @@
-import os
-import pathlib
-import sys
 import unittest
 
 import pgvector_rag
-
 from tests import mixins
 
 
