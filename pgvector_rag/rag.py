@@ -1,6 +1,7 @@
 import datetime
 import logging
 import re
+import time
 import typing
 
 import anthropic
@@ -14,13 +15,15 @@ from psycopg import rows
 LOGGER = logging.getLogger(__name__)
 
 INSERT_SQL = re.sub(r'\s+', ' ', """\
-    INSERT INTO documents (document_id, title, content, url, labels)
-         VALUES (%(document_id)s,  %(title)s,
-                 %(content)s, %(url)s, %(labels)s)
+    INSERT INTO documents (document_id, title, content,
+                           url, labels, classification)
+         VALUES (%(document_id)s,  %(title)s, %(content)s, %(url)s,
+                 %(labels)s, %(classification)s)
     ON CONFLICT (url)
         DO UPDATE SET title = EXCLUDED.title,
                       content = EXCLUDED.content,
                       labels = EXCLUDED.labels,
+                      classification = EXCLUDED.classification,
                       modified_at = CURRENT_TIMESTAMP
     RETURNING document_id
 """).encode('utf-8')
@@ -66,7 +69,8 @@ what the content is, just return the content.
 class Document(pydantic.BaseModel):
     title: str
     url: str
-    labels: str
+    labels: str | None
+    classification: str | None
     last_modified_at: datetime.datetime
     content: str
 
@@ -96,18 +100,22 @@ class RAG:
                     'title': document.title,
                     'url': document.url,
                     'labels': document.labels,
+                    'classification': document.classification,
                     'content': optimized
                 })
-            new_document_id = self._postgres_cursor.fetchone()['document_id']
+            new_document_id = str(
+                self._postgres_cursor.fetchone()['document_id'])
             updated = new_document_id != document_id
             if updated:
                 LOGGER.info('Updated "%s"', document.title)
                 document_id = new_document_id
+            else:
+                LOGGER.info('Added "%s"', document.title)
 
             chunk = 9999
             for chunk, value in enumerate(self._chunk_document(optimized)):
-                LOGGER.info('Processing chunk #%i (%i bytes)',
-                            chunk, len(value))
+                LOGGER.debug('Processing chunk #%i (%i bytes)',
+                             chunk, len(value))
                 embedding = self._get_embedding(value)
                 self._postgres_cursor.execute(
                     INSERT_CHUNK_SQL,
@@ -117,7 +125,7 @@ class RAG:
                         'embedding': embedding
                     })
             if updated and chunk != 9999:
-                LOGGER.info('Deleting stale chunks')
+                LOGGER.debug('Deleting stale chunks')
                 self._postgres_cursor.execute(
                     DELETE_STALE_CHUNKS,
                     {
@@ -190,17 +198,21 @@ class RAG:
 
     def _optimize_document(self, document: Document) -> str:
             """Optimize document for RAG system."""
-            LOGGER.info('Optimizing "%s"', document.title)
+            LOGGER.debug('Optimizing "%s"', document.title)
             output = [
                 f'Title: {document.title}',
                 f'URL: {document.url}',
+                f'Classification: {document.classification}' \
+                    if document.classification else '',
                 f'Last Modified: {document.last_modified_at}',
                 f'Labels: {document.labels}' if document.labels else '',
                 '<content>'
             ]
+            output = [line for line in output if line != '']
+            start_time = time.time()
             for chunk in self._chunk_markdown(document.content):
                 response = self._anthropic.messages.create(
-                    model='claude-3-5-sonnet-20241022',
+                    model='claude-3-5-haiku-latest',
                     messages=[
                         {
                             'role': 'user',
@@ -209,6 +221,8 @@ class RAG:
                     ],
                     max_tokens=1024,
                     system=OPTIMIZE_PROMPT)
-                output.append(str(response.content[0].text))
+                output.append(re.sub(r'\n+', '\n', response.content[0].text))
             output.append('</content>')
+            duration = time.time() - start_time
+            LOGGER.debug('Took %.2f seconds to optimize', duration)
             return '\n'.join(output)
