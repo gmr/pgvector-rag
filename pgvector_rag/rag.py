@@ -52,7 +52,7 @@ WITH matches AS (
       FROM documents
       JOIN matches USING (document_id)
      WHERE document_id IN (SELECT document_id FROM matches)
-  GROUP BY title, url, content
+  GROUP BY content
 """).encode('utf-8')
 
 OPTIMIZE_PROMPT = re.sub(r'\s+', ' ', """\
@@ -106,7 +106,8 @@ class RAG:
 
             chunk = 9999
             for chunk, value in enumerate(self._chunk_document(optimized)):
-                LOGGER.info('Processing chunk #%i', chunk)
+                LOGGER.info('Processing chunk #%i (%i bytes)',
+                            chunk, len(value))
                 embedding = self._get_embedding(value)
                 self._postgres_cursor.execute(
                     INSERT_CHUNK_SQL,
@@ -116,6 +117,7 @@ class RAG:
                         'embedding': embedding
                     })
             if updated and chunk != 9999:
+                LOGGER.info('Deleting stale chunks')
                 self._postgres_cursor.execute(
                     DELETE_STALE_CHUNKS,
                     {
@@ -126,7 +128,10 @@ class RAG:
     def search(self, query: str, limit: int = 8) -> list[dict[str, float]]:
         """Search for documents to use with an LLM model for context.
 
-        Returns a list of dictionaries with 'content' and 'similarity' keys.
+        Returns a list of dictionaries with:
+
+            - content: Document content
+            - similarity: Similarity to query
 
         """
         vectors = self._get_embedding(query)
@@ -171,15 +176,11 @@ class RAG:
         for token in tokens:
             if token.type == 'heading_open':
                 if current_chunk and len(''.join(current_chunk)) > 2048:
-                    chunk = ''.join(current_chunk)
-                    if len(chunk) > 4096:
-                        LOGGER.warning('Chunk too large: %i', len(chunk))
-                    yield chunk
+                    yield ''.join(current_chunk)
                     current_chunk = []
             current_chunk.append(token.markup + token.content)
         if current_chunk:
-            chunk = ''.join(current_chunk)
-            yield chunk
+            yield ''.join(current_chunk)
 
     def _get_embedding(self, text: str) -> list[float]:
             """Get embeddings using OpenAI API."""
