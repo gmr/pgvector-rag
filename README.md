@@ -1,7 +1,7 @@
 pgvector-rag
 ============
 
-A simple library for working with RAG documents using pg_vector in PostgreSQL.
+A simple library for working with RAG documents using [pg_vector](https://github.com/pgvector/pgvector) in PostgreSQL.
 
 Documents will pass through an optimization stage where the content is converted
 to markdown, submitted to OpenAI's GPT-4o, and the response is used to a more
