@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pgvector-rag"
+version = "0.1.0"
+description = "A library for interfacing with pg_vector for RAG"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "markdown-it-py",
+    "openai",
+    "psycopg",
+    "pydantic",
+    "uuid-utils"
+]
+
+[project.optional-dependencies]
+dev = [
+    "coverage",
+    "ruff"
+]
+
+[tool.ruff]
+line-length = 79
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "ASYNC", # flake8-async
+    "B",     # flake8-bugbear
+    "BLE",   # flake8-blind-except
+    "C4",    # flake8-comprehensions
+    "DTZ",   # flake8-datetimez
+    "E",
+    "W",     # pycodestyle
+    "F",     # pyflakes
+    "G",     # flake8-logging-format
+    "I",     # isort
+    "S",     # flake8-bandit
+    "T20",   # flake8-print
+    "UP",    # pyupgrade
+]
+exclude = []
+
+[tool.coverage.xml]
+output = "build/coverage.xml"
+
+[tool.coverage.run]
+branch = true
+source = ["pgvector_rag"]
+command_line = "-m unittest discover tests --buffer --verbose"
+
+[tool.pyright]
+reportOptionalMemberAccess = false
+reportUnknownMemberType = false
