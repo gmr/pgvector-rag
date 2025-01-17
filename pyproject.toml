@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pgvector-rag"
-version = "0.1.0"
+version = "0.2.0"
 description = "A library for interfacing with pg_vector for RAG"
 license = { file = "LICENSE" }
 authors = [{ name = "Gavin M. Roy", email = "gavinmroy@gmail.com" }]
@@ -21,6 +21,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence"
 ]
 dependencies = [
+    "anthropic",
     "markdown-it-py",
     "openai",
     "psycopg",

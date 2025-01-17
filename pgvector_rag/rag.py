@@ -3,6 +3,7 @@ import logging
 import re
 import typing
 
+import anthropic
 import markdown_it
 import openai
 import psycopg
@@ -13,13 +14,28 @@ from psycopg import rows
 LOGGER = logging.getLogger(__name__)
 
 INSERT_SQL = re.sub(r'\s+', ' ', """\
-    INSERT INTO documents (document_id, title, content, url)
-         VALUES (%(document_id)s,  %(title)s, %(content)s, %(url)s)
+    INSERT INTO documents (document_id, title, content, url, labels)
+         VALUES (%(document_id)s,  %(title)s,
+                 %(content)s, %(url)s, %(labels)s)
+    ON CONFLICT (url)
+        DO UPDATE SET title = EXCLUDED.title,
+                      content = EXCLUDED.content,
+                      labels = EXCLUDED.labels,
+                      modified_at = CURRENT_TIMESTAMP
+    RETURNING document_id
 """).encode('utf-8')
 
 INSERT_CHUNK_SQL = re.sub(r'\s+', ' ', """\
     INSERT INTO chunks (document_id, chunk, embedding)
          VALUES (%(document_id)s,  %(chunk)s, %(embedding)s)
+    ON CONFLICT (document_id, chunk)
+      DO UPDATE SET embedding = EXCLUDED.embedding;
+""").encode('utf-8')
+
+DELETE_STALE_CHUNKS = re.sub(r'\s+', ' ', """\
+    DELETE FROM chunks
+          WHERE document_id = %(document_id)s
+            AND chunk > %(chunk)s
 """).encode('utf-8')
 
 SEARCH_SQL = re.sub(r'\s+', ' ', """\
@@ -39,18 +55,13 @@ WITH matches AS (
   GROUP BY title, url, content
 """).encode('utf-8')
 
-OPTIMIZE_PROMPT = """\
-<instructions>
+OPTIMIZE_PROMPT = re.sub(r'\s+', ' ', """\
 Optimize this content, including its title, for use in a RAG system that will
 be used with LLM models.  You can remove any unnecessary information, but do
 not remove any substantive content. Do not remove or abbreviate any
 imperatives, leave them as written. Do not include a preface that tells me
 what the content is, just return the content.
-</instructions>
-<content>
-{content}
-</content>
-"""
+""")
 
 class Document(pydantic.BaseModel):
     title: str
@@ -64,8 +75,10 @@ class RAG:
     """Retrieval Augmented Generation system for LLM models."""
 
     def __init__(self,
+                 anthropic_api_key: str,
                  openai_api_key: str,
                  postgres_uri: str):
+        self._anthropic = anthropic.Client(api_key=anthropic_api_key)
         self._openai = openai.Client(api_key=openai_api_key)
         self._postgres =  psycopg.connect(postgres_uri)
         self._postgres.autocommit = True
@@ -76,26 +89,38 @@ class RAG:
             """Add document to vector store, optimizing it for LLM usage."""
             optimized = self._optimize_document(document)
             document_id = str(uuid_utils.uuid7())
-            self._postgres.execute(
+            self._postgres_cursor.execute(
                 INSERT_SQL,
                 {
                     'document_id': document_id,
                     'title': document.title,
                     'url': document.url,
-                    'last_modified_at': document.last_modified_at,
                     'labels': document.labels,
                     'content': optimized
                 })
+            new_document_id = self._postgres_cursor.fetchone()['document_id']
+            updated = new_document_id != document_id
+            if updated:
+                LOGGER.info('Updated "%s"', document.title)
+                document_id = new_document_id
 
+            chunk = 9999
             for chunk, value in enumerate(self._chunk_document(optimized)):
                 LOGGER.info('Processing chunk #%i', chunk)
                 embedding = self._get_embedding(value)
-                self._postgres.execute(
+                self._postgres_cursor.execute(
                     INSERT_CHUNK_SQL,
                     {
                         'document_id': document_id,
                         'chunk': chunk,
                         'embedding': embedding
+                    })
+            if updated and chunk != 9999:
+                self._postgres_cursor.execute(
+                    DELETE_STALE_CHUNKS,
+                    {
+                        'document_id': document_id,
+                        'chunk': chunk
                     })
 
     def search(self, query: str, limit: int = 8) -> list[dict[str, float]]:
@@ -173,14 +198,16 @@ class RAG:
                 '<content>'
             ]
             for chunk in self._chunk_markdown(document.content):
-                response = self._openai.chat.completions.create(
-                    messages = [
+                response = self._anthropic.messages.create(
+                    model='claude-3-5-sonnet-20241022',
+                    messages=[
                         {
                             'role': 'user',
-                            'content': OPTIMIZE_PROMPT.format(content=chunk)
+                            'content': chunk
                         }
                     ],
-                    model='gpt-4o')
-                output.append(str(response.choices[0].message.content))
+                    max_tokens=1024,
+                    system=OPTIMIZE_PROMPT)
+                output.append(str(response.content[0].text))
             output.append('</content>')
             return '\n'.join(output)
