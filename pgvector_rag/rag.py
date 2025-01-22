@@ -15,10 +15,10 @@ from psycopg import rows
 LOGGER = logging.getLogger(__name__)
 
 INSERT_SQL = re.sub(r'\s+', ' ', """\
-    INSERT INTO documents (document_id, title, content,
-                           url, labels, classification)
+    INSERT INTO documents (document_id, title, content, url, labels,
+                           classification, modified_at)
          VALUES (%(document_id)s,  %(title)s, %(content)s, %(url)s,
-                 %(labels)s, %(classification)s)
+                 %(labels)s, %(classification)s, %(modified_at)s)
     ON CONFLICT (url)
         DO UPDATE SET title = EXCLUDED.title,
                       content = EXCLUDED.content,
